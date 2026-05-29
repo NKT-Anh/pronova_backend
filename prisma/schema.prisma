@@ -1,0 +1,358 @@
+// ============================================================
+// schema.prisma — Pronunciation Learning Platform
+// Last updated: reviewed & improved
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum VoiceType {
+  MALE
+  FEMALE
+  NEUTRAL
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketCategory {
+  GENERAL
+  PRONUNCIATION
+  ACCOUNT
+  PAYMENT
+  BUG_REPORT
+  FEATURE_REQUEST
+}
+
+enum ProcessingStatus {
+  NOT_QUEUED 
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// [MỚI] Thay thế cho ageRange String tự do trong UserSetting
+enum AgeRange {
+  AGE_13_17
+  AGE_18_24
+  AGE_25_34
+  AGE_35_44
+  AGE_45_PLUS
+}
+
+// ============================================================
+// MODELS
+// ============================================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  passwordHash String
+  name      String?
+  role      UserRole @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  folders       Folder[]
+  attempts      Attempt[]
+  setting       UserSetting?
+  dailyProgress DailyProgress[]
+  conversations ChatConversation[]
+  supportTickets SupportTicket[]
+  sessions      UserSession[]
+}
+
+model GuestSession {
+  id        String   @id @default(uuid())
+  deviceId  String   @unique
+  createdAt DateTime @default(now())
+
+  folders       Folder[]
+  attempts      Attempt[]
+  conversations ChatConversation[]
+}
+
+model ChatConversation {
+  id        String   @id @default(uuid())
+  title     String?
+  userId    String?
+  guestId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guest    GuestSession? @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId, updatedAt])
+  @@index([guestId, updatedAt])
+}
+
+model ChatMessage {
+  id             String   @id @default(uuid())
+  conversationId String
+  role           String
+  content        String   @db.Text
+  inputMode      String   @default("text")
+  languageCode   String?
+  audioMimeType  String?
+  audioBase64    String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+// [MỚI] Model Language — chuẩn hoá các ngôn ngữ được hỗ trợ
+// Thay thế cho việc dùng String tự do ở sourceLang, destLang, languageCode
+model Language {
+  code        String  @id // "vi", "en", "ja" — ISO 639-1
+  name        String // "Vietnamese"
+  nativeName  String // "Tiếng Việt"
+  isSupported Boolean @default(true)
+  azureCode   String? // code riêng cho Azure Speech Service nếu khác ISO
+
+  textItemsAsSource TextItem[] @relation("SourceLanguage")
+  textItemsAsDest   TextItem[] @relation("DestLanguage")
+  attempts          Attempt[]
+
+  @@index([isSupported])
+}
+
+model Folder {
+  id          String  @id @default(uuid())
+  name        String
+  description String? @db.Text
+  color       String? @default("#3B82F6")
+  icon        String? @default("folder")
+
+  // CONSTRAINT: chỉ một trong hai được có giá trị, không được cả hai null
+  // Enforce tại application layer (API route) — Prisma chưa hỗ trợ CHECK constraint trực tiếp
+  userId  String?
+  guestId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guest     GuestSession? @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  textItems TextItem[]
+
+  @@index([userId])
+  @@index([guestId])
+}
+
+model TextItem {
+  id           String @id @default(uuid())
+  folderId     String
+  originalText String @db.Text
+
+  // Dịch thuật — destLang null thì translatedText cũng phải null (enforce ở app layer)
+  translatedText String? @db.Text
+  sourceLang     String // ISO 639-1, ví dụ: "vi", "en"
+  destLang       String? // null nếu chưa dịch
+
+  // Cấu hình giọng đọc mẫu
+  voiceType  VoiceType @default(FEMALE)
+  voiceProvider String? // Ví dụ: "azure", "google"
+  voiceName     String? // Ví dụ: "vi-VN-HoaiMyNeural"
+
+  // Audio mẫu do AI đọc
+  // PENDING = đã queue, đang chờ worker
+  sampleAudioUrl    String?
+  sampleAudioStatus ProcessingStatus @default(PENDING)
+  sampleAudioError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  folder   Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  attempts Attempt[]
+
+  // [MỚI] Quan hệ tới Language model (tuỳ chọn — sourceLang/destLang vẫn giữ String để linh hoạt)
+  sourceLanguage Language? @relation("SourceLanguage", fields: [sourceLang], references: [code])
+  destLanguage   Language? @relation("DestLanguage", fields: [destLang], references: [code])
+
+  @@index([folderId])
+  @@index([sourceLang])
+  @@index([createdAt])
+  @@index([sampleAudioStatus]) // Để worker query items cần xử lý
+}
+
+model Attempt {
+  id           String  @id @default(uuid())
+  textItemId   String
+  userId       String?
+  guestId      String?
+  languageCode String // ISO 639-1
+
+  // Điểm chi tiết từ Azure Speech
+  overallScore      Float?
+  accuracyScore     Float?
+  fluencyScore      Float?
+  completenessScore Float?
+  prosodyScore      Float?
+
+  status         ProcessingStatus @default(PENDING)
+  errorMessage   String?
+  audioUrl       String?
+  recognizedText String?          @db.Text
+  details        Json?            @db.JsonB // Chi tiết word-level / phoneme từ Azure
+
+  // Metadata cho AI Training dataset
+  audioDuration Int?    // Milliseconds
+  audioFormat   String? // "wav", "m4a", "mp3"
+  sampleRate    Int?    // 16000, 44100, etc.
+  isUsableForAI Boolean @default(true) // false nếu audio lỗi / rỗng / chất lượng kém
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  textItem TextItem      @relation(fields: [textItemId], references: [id], onDelete: Cascade)
+  user     User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guest    GuestSession? @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  // [MỚI] Quan hệ tới Language
+  language Language? @relation(fields: [languageCode], references: [code])
+
+  @@index([textItemId])
+  @@index([userId])
+  @@index([guestId])
+  @@index([userId, createdAt])
+  @@index([guestId, createdAt])
+  @@index([textItemId, createdAt])
+  @@index([status])           // [MỚI] Query attempts theo trạng thái xử lý
+  @@index([isUsableForAI])    // [MỚI] Filter dataset cho AI training
+  @@index([languageCode])     // [MỚI] Filter theo ngôn ngữ
+}
+
+model UserSetting {
+  id              String  @id @default(uuid())
+  userId          String  @unique
+  theme           String  @default("system")
+  language        String  @default("vi")
+  dailyGoal       Int     @default(15) // Số phút / lượt luyện tập mỗi ngày
+  autoPlaySample  Boolean @default(true)
+  reminderEnabled Boolean @default(true)
+  reminderTime    String? @default("20:00")
+
+  // Dữ liệu cho AI Training (chỉ thu thập khi user đồng ý)
+  allowDataCollection Boolean  @default(false) // Bắt buộc opt-in, không được tự bật
+  nativeLanguage      String?  @default("vi")  // Accent detection
+  ageRange            AgeRange? // [SỬA] Dùng Enum thay String tự do
+  gender              Gender?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// [MỚI] Track tiến độ hàng ngày — dùng cho streak, gamification, reminder
+model DailyProgress {
+  id            String   @id @default(uuid())
+  userId        String
+  date          DateTime @db.Date // Chỉ lưu ngày, không lưu giờ
+  attemptsCount Int      @default(0) // Số lần luyện tập trong ngày
+  minutesPracticed Int   @default(0) // Tổng thời gian luyện (tính từ audioDuration)
+  goalMet       Boolean  @default(false) // Đã đạt dailyGoal chưa
+  streakDay     Int      @default(0) // Ngày streak thứ mấy (tính liên tiếp)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date]) // Mỗi user chỉ có 1 record mỗi ngày
+  @@index([userId, date])
+}
+
+model TranslationCache {
+  id         String   @id @default(uuid())
+  // text field bỏ bớt — chỉ giữ nếu cần audit/debug
+  // Nếu không cần debug, xoá field này để tiết kiệm storage
+  textHash   String
+  sourceLang String
+  targetLang String
+  result     Json     @db.JsonB // Câu dịch + gợi ý phát âm
+  createdAt  DateTime @default(now())
+
+  @@unique([textHash, sourceLang, targetLang])
+  @@index([createdAt])
+}
+
+model SystemConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  valueType   String   @default("string")
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================================
+// SUPPORT TICKETS
+// ============================================================
+
+model SupportTicket {
+  id        String         @id @default(uuid())
+  userId    String?        // null = guest (email required)
+  email     String         // email người gửi (tự điền hoặc lấy từ user)
+  name      String?        // tên người gửi
+  subject   String
+  message   String         @db.Text
+  category  TicketCategory @default(GENERAL)
+  status    TicketStatus   @default(OPEN)
+
+  // Phản hồi từ admin (SMTP gửi lại cho user)
+  adminReply    String?  @db.Text
+  repliedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model UserSession {
+  id           String   @id @default(uuid())
+  userId       String
+  userAgent    String?
+  ipAddress    String?
+  tokenHash    String   @unique
+  isActive     Boolean  @default(true)
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
