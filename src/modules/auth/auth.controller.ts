@@ -2,6 +2,9 @@ import { Body, Controller, Get, Post, UseGuards, Headers, Ip } from '@nestjs/com
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CurrentUser } from '../../core/decorators/current-user.decorator';
 import type { CurrentUserPayload } from '../../core/decorators/current-user.decorator';
@@ -28,9 +31,38 @@ export class AuthController {
     return this.authService.login(loginDto, userAgent, ip);
   }
 
+  @Post('google')
+  async googleLogin(
+    @Body() googleLoginDto: GoogleLoginDto,
+    @Headers('user-agent') userAgent?: string,
+    @Ip() ip?: string,
+  ) {
+    return this.authService.googleLogin(googleLoginDto, userAgent, ip);
+  }
+
+  @Post('link-google')
+  @UseGuards(JwtAuthGuard)
+  async linkGoogle(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() body: { token: string },
+  ) {
+    return this.authService.linkGoogle(user.id, body.token);
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: CurrentUserPayload) {
     return this.authService.me(user.id);
   }
+
+  @Post('forgot-password')
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(forgotPasswordDto);
+  }
+
+  @Post('reset-password')
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetPasswordDto);
+  }
 }
+

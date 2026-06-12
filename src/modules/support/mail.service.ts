@@ -162,4 +162,60 @@ export class MailService {
 </body>
 </html>`;
   }
+
+  // ── Template: OTP quên mật khẩu ──────────────────────────────
+  buildForgotPasswordOtpHtml(data: { email: string; code: string }): string {
+    return `
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Khôi phục mật khẩu - Pronova</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f8;padding:40px 0;">
+    <tr><td align="center">
+      <table width="580" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 20px rgba(0,0,0,0.08);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#6C63FF,#4facfe);padding:32px 40px;text-align:center;">
+            <h1 style="margin:0;color:#fff;font-size:24px;font-weight:700;">🎙️ Pronova</h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:14px;">Khôi phục mật khẩu tài khoản</p>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:36px 40px;">
+            <h2 style="margin:0 0 12px;color:#1a1a2e;font-size:20px;text-align:center;">Mã xác thực OTP của bạn 🔑</h2>
+            <p style="margin:0 0 24px;color:#5a5a7a;font-size:14px;line-height:1.6;text-align:center;">
+              Xin chào <strong>${data.email}</strong>,<br/>
+              Chúng tôi nhận được yêu cầu khôi phục mật khẩu cho tài khoản của bạn.
+              Dưới đây là mã OTP xác thực của bạn. Mã này có hiệu lực trong vòng <strong>5 phút</strong>.
+            </p>
+            <!-- OTP Box -->
+            <div style="background:#f8f8fc;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;border: 1px dashed #6C63FF;">
+              <span style="display:block;color:#9898b8;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">MÃ OTP CỦA BẠN</span>
+              <span style="color:#6C63FF;font-size:36px;font-weight:800;letter-spacing:6px;font-family:monospace;">${data.code}</span>
+            </div>
+            <p style="margin:0 0 16px;color:#e11d48;font-size:13px;line-height:1.6;text-align:center;font-weight:500;">
+              Lưu ý: Tuyệt đối không chia sẻ mã này với bất kỳ ai để bảo mật tài khoản.
+            </p>
+            <p style="margin:0;color:#9898b8;font-size:12px;text-align:center;">
+              Nếu bạn không yêu cầu khôi phục mật khẩu, vui lòng bỏ qua email này.
+            </p>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f4f4f8;padding:20px 40px;text-align:center;border-top:1px solid #e8e8f0;">
+            <p style="margin:0;color:#9898b8;font-size:12px;">© 2026 Pronova Coach. All rights reserved.</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  }
 }

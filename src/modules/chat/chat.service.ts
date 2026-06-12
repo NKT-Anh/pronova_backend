@@ -5,10 +5,16 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import OpenAI, { toFile } from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import { UserOrGuestContext } from '../../core/decorators/user-or-guest.decorator';
 import { PrismaService } from '../../core/prisma/prisma.service';
 import { SendTextChatDto, SendVoiceChatDto } from './dto/chat.dto';
+import { TextToSpeechService } from '../text-to-speech/text-to-speech.service';
+import {
+  assertAudioDurationLimit,
+  assertSupportedAudioUpload,
+  normalizeAudioMimetype,
+} from '../../core/upload/audio-file.validator';
 
 const SUPPORTED_TRANSCRIPTION_MIME_TYPES = new Set([
   'audio/mpeg',
@@ -22,21 +28,19 @@ const SUPPORTED_TRANSCRIPTION_MIME_TYPES = new Set([
   'audio/webm',
 ]);
 
+import { GeminiConfigService } from '../../core/gemini/gemini-config.service';
+
 @Injectable()
 export class ChatService {
-  private readonly openai: OpenAI;
-
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
-  ) {
-    this.openai = new OpenAI({
-      apiKey: this.configService.get<string>('OPENAI_API_KEY') || 'missing-key',
-    });
-  }
+    private textToSpeechService: TextToSpeechService,
+    private geminiConfigService: GeminiConfigService,
+  ) {}
 
   async sendText(owner: UserOrGuestContext, dto: SendTextChatDto) {
-    this.assertOpenAiConfigured();
+    this.assertGeminiConfigured();
     const conversation = await this.findOrCreateConversation(
       owner,
       dto.conversationId,
@@ -57,16 +61,26 @@ export class ChatService {
     dto: SendVoiceChatDto,
     audio: Express.Multer.File,
   ) {
-    this.assertOpenAiConfigured();
+    this.assertGeminiConfigured();
+    assertSupportedAudioUpload(audio);
+    await assertAudioDurationLimit(audio);
     this.assertSupportedAudio(audio);
-    const transcribedText = await this.transcribeAudio(audio, dto.languageCode);
+
+    // [TEST] Bỏ qua chuyển đổi sang văn bản theo yêu cầu của user để kiểm tra việc lưu đoạn ghi âm
+    // const transcribedText = await this.transcribeAudio(audio, dto.languageCode);
+    const transcribedText = '🎙️ Tin nhắn thoại (Chưa chuyển sang văn bản)';
+
     const conversation = await this.findOrCreateConversation(
       owner,
       dto.conversationId,
       transcribedText,
     );
+
+    // Lưu tin nhắn user kèm base64 của audio vào database
     await this.createMessage(conversation.id, 'user', transcribedText, 'voice', {
       languageCode: dto.languageCode,
+      audioBase64: audio.buffer.toString('base64'),
+      audioMimeType: audio.mimetype,
     });
 
     return this.respondWithAssistant(owner, conversation.id, {
@@ -112,7 +126,7 @@ export class ChatService {
     const assistantText = await this.createAssistantText(conversation.messages);
     const audio = await this.createAssistantAudio(
       assistantText,
-      options.voice || 'alloy',
+      options.voice || 'Kore',
     );
     await this.createMessage(conversation.id, 'assistant', assistantText, 'text', {
       languageCode: options.languageCode,
@@ -144,41 +158,48 @@ export class ChatService {
     const transcript = recentMessages
       .map((message) => `${message.role}: ${message.content}`)
       .join('\n');
-    const model =
-      this.configService.get<string>('OPENAI_CHAT_MODEL') || 'gpt-4o-mini';
+    const model = this.geminiConfigService.resolveModel('chat');
+    const client = this.geminiConfigService.getClient('chat');
 
-    const response = await this.openai.responses.create({
-      model,
-      instructions:
-        'You are a friendly pronunciation practice chatbot. Keep replies concise, natural, and useful for language learners. If the user makes a grammar or pronunciation-related mistake, gently correct it and continue the conversation.',
-      input: `Conversation so far:\n${transcript}\n\nReply as assistant.`,
-    });
+    try {
+      const response = await client.models.generateContent({
+        model,
+        contents: `Conversation so far:\n${transcript}\n\nReply as assistant.`,
+        config: {
+          systemInstruction:
+            'You are a friendly pronunciation practice chatbot. Keep replies concise, natural, and useful for language learners. If the user makes a grammar or pronunciation-related mistake, gently correct it and continue the conversation.',
+        },
+      });
 
-    const text = response.output_text?.trim();
+      const text = response.text?.trim();
 
-    if (!text) {
-      throw new ServiceUnavailableException('Chatbot returned an empty reply');
+      if (!text) {
+        throw new ServiceUnavailableException('Chatbot returned an empty reply');
+      }
+
+      return text;
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException && error.message.includes('empty reply')) {
+        throw error;
+      }
+      this.geminiConfigService.mapGeminiError(error, 'chat');
     }
-
-    return text;
   }
 
   private async createAssistantAudio(text: string, voice: string) {
-    const model =
-      this.configService.get<string>('OPENAI_TTS_MODEL') || 'gpt-4o-mini-tts';
-    const response = await this.openai.audio.speech.create({
-      model,
-      voice: voice as never,
-      input: text,
-      response_format: 'mp3',
+    const audio = await this.textToSpeechService.synthesize({
+      text,
+      voiceName: voice,
     });
-    const audioBuffer = Buffer.from(await response.arrayBuffer());
 
     return {
-      mimeType: 'audio/mpeg',
-      format: 'mp3',
-      audioBase64: audioBuffer.toString('base64'),
-      disclosure: 'AI-generated voice',
+      mimeType: audio.mimeType,
+      format: audio.format,
+      audioBase64: audio.audioBase64,
+      voiceName: audio.voiceName,
+      provider: audio.provider,
+      model: audio.model,
+      disclosure: 'AI-generated voice by Google Text-to-Speech',
     };
   }
 
@@ -186,30 +207,41 @@ export class ChatService {
     audio: Express.Multer.File,
     languageCode?: string,
   ) {
-    const model =
-      this.configService.get<string>('OPENAI_TRANSCRIBE_MODEL') ||
-      'gpt-4o-mini-transcribe';
-    const file = await toFile(audio.buffer, audio.originalname, {
-      type: audio.mimetype,
-    });
-    const transcription = await this.openai.audio.transcriptions.create({
-      file,
-      model,
-      language: languageCode,
-    });
+    const model = this.geminiConfigService.resolveModel('speechToText');
+    try {
+      const response = await this.getSpeechToTextClient().models.generateContent({
+        model,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  data: audio.buffer.toString('base64'),
+                  mimeType: audio.mimetype,
+                },
+              },
+              {
+                text: `Transcribe this speech to plain text only. Language hint: ${languageCode || 'auto'}.`,
+              },
+            ],
+          },
+        ],
+      });
 
-    const text =
-      typeof transcription === 'string'
-        ? transcription
-        : 'text' in transcription
-          ? transcription.text
-          : '';
+      const text = response.text;
 
-    if (!text?.trim()) {
-      throw new BadRequestException('Could not transcribe audio');
+      if (!text?.trim()) {
+        throw new BadRequestException('Could not transcribe audio');
+      }
+
+      return text.trim();
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.geminiConfigService.mapGeminiError(error, 'speechToText');
     }
-
-    return text.trim();
   }
 
   private async findOrCreateConversation(
@@ -328,16 +360,13 @@ export class ChatService {
     return session?.id;
   }
 
-  private assertOpenAiConfigured() {
-    if (!this.configService.get<string>('OPENAI_API_KEY')) {
-      throw new ServiceUnavailableException(
-        'OpenAI is not configured. Set OPENAI_API_KEY in .env',
-      );
-    }
+  private assertGeminiConfigured() {
+    this.geminiConfigService.resolveApiKey('chat');
   }
 
   private assertSupportedAudio(audio: Express.Multer.File) {
-    if (!SUPPORTED_TRANSCRIPTION_MIME_TYPES.has(audio.mimetype.toLowerCase())) {
+    const mimeType = normalizeAudioMimetype(audio);
+    if (!SUPPORTED_TRANSCRIPTION_MIME_TYPES.has(mimeType)) {
       throw new BadRequestException(
         'Unsupported audio type. Use mp3, mp4, mpeg, mpga, m4a, wav, or webm.',
       );
@@ -349,5 +378,9 @@ export class ChatService {
     return normalized.length > 60
       ? `${normalized.slice(0, 57).trim()}...`
       : normalized;
+  }
+
+  private getSpeechToTextClient() {
+    return this.geminiConfigService.getClient('speechToText');
   }
 }

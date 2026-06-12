@@ -2,6 +2,21 @@
 // npm install --save-dev prisma dotenv
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
+import * as fs from "fs";
+
+let databaseUrl = process.env["DATABASE_URL"] || "";
+
+// 1. Solve interpolation for ${DB_PASSWORD} if not already resolved by dotenv
+if (databaseUrl.includes("${DB_PASSWORD}")) {
+  const dbPassword = process.env["DB_PASSWORD"] || "";
+  databaseUrl = databaseUrl.replace("${DB_PASSWORD}", dbPassword);
+}
+
+// 2. Automatically switch host 'postgres' to 'localhost' when running on the host machine (outside Docker)
+const isDocker = fs.existsSync("/.dockerenv");
+if (!isDocker && databaseUrl.includes("@postgres:5432")) {
+  databaseUrl = databaseUrl.replace("@postgres:5432", "@localhost:5432");
+}
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -9,6 +24,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    url: databaseUrl,
   },
 });
+

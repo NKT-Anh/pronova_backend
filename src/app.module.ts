@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './core/prisma/prisma.module';
+import { GeminiConfigModule } from './core/gemini/gemini-config.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AttemptModule } from './modules/attempt/attempt.module';
 import { ChatModule } from './modules/chat/chat.module';
@@ -21,6 +22,7 @@ import { ProgressModule } from './modules/progress/progress.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
+    GeminiConfigModule,
     AuthModule,
     UserModule,
     FolderModule,

@@ -64,3 +64,21 @@ export class UpdateTextItemDto {
   @IsOptional()
   voiceName?: string;
 }
+
+export class GenerateTextItemSpeechDto {
+  @IsString()
+  @IsOptional()
+  text?: string;
+
+  @IsString()
+  @IsOptional()
+  languageCode?: string;
+
+  @IsEnum(VoiceType)
+  @IsOptional()
+  voiceType?: VoiceType;
+
+  @IsString()
+  @IsOptional()
+  voiceName?: string;
+}

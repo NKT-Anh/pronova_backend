@@ -13,6 +13,9 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes } from '@nestjs/swagger';
 import { UserOrGuest } from '../../core/decorators/user-or-guest.decorator';
 import type { UserOrGuestContext } from '../../core/decorators/user-or-guest.decorator';
+import { RateLimit } from '../../core/rate-limit/rate-limit.decorator';
+import { RateLimitGuard } from '../../core/rate-limit/rate-limit.guard';
+import { MAX_AUDIO_UPLOAD_BYTES } from '../../core/upload/audio-upload.constants';
 import { OptionalJwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ChatService } from './chat.service';
 import { SendTextChatDto, SendVoiceChatDto } from './dto/chat.dto';
@@ -24,6 +27,8 @@ export class ChatController {
 
   @Post('text')
   @ApiBearerAuth('jwt')
+  @RateLimit({ userLimit: 20, guestLimit: 10, windowMs: 60_000 })
+  @UseGuards(RateLimitGuard)
   sendText(
     @UserOrGuest() owner: UserOrGuestContext,
     @Body() dto: SendTextChatDto,
@@ -41,7 +46,7 @@ export class ChatController {
       properties: {
         conversationId: { type: 'string' },
         languageCode: { type: 'string', example: 'en' },
-        voice: { type: 'string', example: 'alloy' },
+        voice: { type: 'string', example: 'Kore' },
         audio: {
           type: 'string',
           format: 'binary',
@@ -50,7 +55,9 @@ export class ChatController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('audio', { limits: { fileSize: 25 * 1024 * 1024 } }))
+  @RateLimit({ userLimit: 5, guestLimit: 3, windowMs: 60_000 })
+  @UseGuards(RateLimitGuard)
+  @UseInterceptors(FileInterceptor('audio', { limits: { fileSize: MAX_AUDIO_UPLOAD_BYTES } }))
   sendVoice(
     @UserOrGuest() owner: UserOrGuestContext,
     @Body() dto: SendVoiceChatDto,

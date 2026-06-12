@@ -7,6 +7,7 @@ export function toUserResponse(user: UserWithSetting) {
     id: user.id,
     email: user.email,
     name: user.name,
+    googleId: user.googleId,
     role: user.role,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,

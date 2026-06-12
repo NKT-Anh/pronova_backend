@@ -2,6 +2,12 @@ node_modules
 # Keep environment variables out of version control
 .env
 .env.*
+!.env.example
+keys/
+*.service-account.json
+google-service-account*.json
+backups/
+*.sql
 
 # Compiled output
 /dist
@@ -14,3 +20,5 @@ yarn-error.log*
 .vscode/
 .idea/
 
+# Local documentation notes
+*.md

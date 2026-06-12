@@ -1,14 +1,33 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { TextItemService } from './text-item.service';
-import { CreateTextItemDto, UpdateTextItemDto } from './dto/text-item.dto';
+import {
+  CreateTextItemDto,
+  GenerateTextItemSpeechDto,
+  UpdateTextItemDto,
+} from './dto/text-item.dto';
+import { RateLimit } from '../../core/rate-limit/rate-limit.decorator';
+import { RateLimitGuard } from '../../core/rate-limit/rate-limit.guard';
 import { OptionalJwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UserOrGuest } from '../../core/decorators/user-or-guest.decorator';
 import type { UserOrGuestContext } from '../../core/decorators/user-or-guest.decorator';
+import * as express from 'express';
 
 @Controller('text-items')
 @UseGuards(OptionalJwtAuthGuard)
 export class TextItemController {
-  constructor(private readonly textItemService: TextItemService) {}
+  constructor(private readonly textItemService: TextItemService) { }
 
   @Post()
   create(
@@ -40,6 +59,28 @@ export class TextItemController {
     @Param('id') id: string,
   ) {
     return this.textItemService.findOne(owner, id);
+  }
+
+  @Post(':id/tts')
+  @ApiBearerAuth('jwt')
+  @ApiBody({ type: GenerateTextItemSpeechDto })
+  @RateLimit({ userLimit: 5, guestLimit: 3, windowMs: 60_000 })
+  @UseGuards(RateLimitGuard)
+  generateSampleSpeech(
+    @UserOrGuest() owner: UserOrGuestContext,
+    @Param('id') id: string,
+    @Body() dto: GenerateTextItemSpeechDto,
+  ) {
+    return this.textItemService.generateSampleSpeech(owner, id, dto);
+  }
+
+  @Get(':id/sample-audio')
+  async getSampleAudio(
+    @Param('id') id: string,
+    @Res() res: express.Response,
+  ) {
+    const filePath = await this.textItemService.getSampleAudioPath(id);
+    return res.sendFile(filePath);
   }
 
   @Patch(':id')
